@@ -1,0 +1,180 @@
+---
+title: "Will it Rain in Seattle?"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+  html_notebook:
+    toc: yes
+editor_options:
+  chunk_output_type: inline
+---
+
+Besides coffee, grunge and technology companies, one of the things that Seattle is most famous for is how often it rains. This dataset contains complete records of daily rainfall patterns from January 1st, 1948 to December 12, 2017.
+
+* DATE = the date of the observation
+* PRCP = the amount of precipitation, in inches
+* TMAX = the maximum temperature for that day, in degrees Fahrenheit
+* TMIN = the minimum temperature for that day, in degrees Fahrenheit
+* RAIN = TRUE if rain was observed on that day, FALSE if it was not
+
+Here are the packages that are being used
+```{r}
+library(ggplot2)
+library(tidyverse) # 
+library(dplyr)
+library(reshape)
+library(caret) # classification and regression training
+library(pROC)
+
+```
+
+# Exploratory Data Analysis
+
+Here we first read in and display the results of the file
+```{r}
+data.df <- read.csv("DataRainSeattle/seattleWeather_1948-2017.csv", header = TRUE)
+head(data.df)
+tail(data.df)
+
+```
+
+## Missing Data 
+Taking care of missing data. Just removing the rows where the is no RAIN value recorded. Fixing the problem 
+
+```{r}
+which(is.na(data.df$RAIN))
+data.df[which(is.na(data.df$RAIN)),]
+
+# remove those rows
+data.df <- data.df[-c(18416, 18417, 21068),]
+
+which(is.na(data.df$TMAX))
+which(is.na(data.df$TMIN))
+
+data.df$DATE = as.Date(data.df$DATE)
+data.df$RAIN <- as.factor(data.df$RAIN)
+```
+## Exploratory Analysis
+
+```{r}
+summary(data.df)
+
+# plot of Rainy vs Non-Rainy days
+ggplot(data.df, aes(RAIN)) + geom_bar() + labs(title="Count of Rainy Day",  subtitle="1948 - 2017")
+
+```
+
+```{r}
+
+ggplot(data.df, aes(x=TMIN, y=PRCP)) + geom_point(size=2, shape=1) + xlab("Minimum Temperature")  + ylab("Precipitation (Inches)") + labs(title="Low Temperature vs Precip",  subtitle="1948 - 2017")
+
+
+
+ggplot(data.df, aes(x=TMAX, y=PRCP)) + geom_point(size=2, shape=1) + xlab("Maximum Temperature")  + ylab("Precipitation (Inches)") + labs(title="Max Temperature vs Precip",  subtitle="1948 - 2017")
+
+
+```
+
+
+
+```{r}
+data.df.melted = melt(data.df[,-5],id.vars = c("DATE"))
+
+# grouped histogram plot
+
+ggplot(data.df.melted, aes(x=variable, y=value, fill=value)) + geom_boxplot()
+
+
+```
+
+
+
+
+
+
+
+remove the outliners
+```{r}
+
+TMIN_todrop = which(data.df$TMIN < 17)
+TMAX_todrop = which(data.df$TMAX > 97.5 | data.df$TMAX < 21.5)
+PRECIP_todrop = which(data.df$PRECIP > 0.25 | data.df$PRECIP < -0.15)
+
+index_todrop = union(TMIN_todrop, TMAX_todrop)
+index_todrop = union(index_todrop, PRECIP_todrop)
+
+data.df.filtered = data.df[-index_todrop,]
+
+```
+
+```{r}
+#Function createDataPartition to create train and test dataset (0.8: 0.2)
+index <- createDataPartition(data.df.filtered$RAIN, p = 0.8, list = FALSE)
+
+# Training
+train.df <- data.df.filtered[index,]
+
+# Testing
+test.df <- data.df.filtered[-index,]
+```
+
+Let's look at the summary of the results. We see that the mean values are aproximately the same, as well as the temperature TMAX and TMIN values. 
+
+```{r}
+head(train.df)
+head(test.df)
+
+summary(train.df)
+summary(test.df)
+```
+
+
+# Training Model
+```{r}
+# glm logistic regression
+# rain is being predicted as a function of the temperatures
+model <- glm(RAIN ~ TMAX + TMIN, data = train.df, family = binomial)
+summary(model)
+```
+
+
+```{r}
+predicted_values <- predict(model, test.df[,-5], type = "response")
+head(predicted_values)
+
+```
+
+# Validating Model
+```{r}
+# table of the test set
+table(test.df$RAIN)
+nrows_prediction<-nrow(test.df)
+
+prediction <- data.frame(c(1:nrows_prediction))
+colnames(prediction) <- c("RAIN")
+
+prediction$RAIN <- as.character(prediction$RAIN)
+prediction$RAIN <- "TRUE"
+
+
+prediction$RAIN[ predicted_values < 0.5] <- "FALSE"
+prediction$RAIN <- as.factor(prediction$RAIN)
+
+table(prediction$RAIN, test.df$RAIN)
+confusionMatrix(prediction$RAIN, test.df$RAIN)
+```
+
+```{r}
+
+plot(roc(test.df$RAIN, predicted_values, direction="<"),
+     col="cornflowerblue", lwd=3, main="ROC of the model", xlim=c(0.9,0),ylim=c(0,1.0))
+
+# Call:
+# roc.default(response = test.df$RAIN, predictor = predicted_values,     direction = "<")
+# Data: predicted_values in 4394 controls (test.df$RAIN FALSE) < 3270 cases (test.df$RAIN TRUE).
+#Area under the curve: 0.8282
+```
+
+
+
